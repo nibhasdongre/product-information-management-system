@@ -1,0 +1,43 @@
+{
+  "batch_id": "msgbatch_01EhTQer66qHpdwn9AhuzZ7f",
+  "model": "claude-sonnet-5",
+  "submission_id": "120f54382aff4bd4a9fe132e2ad308c2",
+  "submitted_at": "2026-11-07T08:45:02+00:00",
+  "processing_status": "ended",
+  "counts": {
+    "processing": 0,
+    "succeeded": 3,
+    "errored": 0,
+    "canceled": 0,
+    "expired": 0
+  },
+  "collected": true,
+  "requests": {
+    "120f54382aff-00000": {
+      "catalog": "Turtle",
+      "page": 1,
+      "dpi": 150,
+      "model_dpi": 150,
+      "render_s": 0.47,
+      "history": []
+    },
+    "120f54382aff-00001": {
+      "catalog": "Turtle",
+      "page": 2,
+      "dpi": 150,
+      "model_dpi": 150,
+      "render_s": 0.355,
+      "history": []
+    },
+    "120f54382aff-00002": {
+      "catalog": "Turtle",
+      "page": 3,
+      "dpi": 150,
+      "model_dpi": 150,
+      "render_s": 0.289,
+      "history": []
+    }
+  },
+  "batch_created_at": "2026-11-07T08:45:08+00:00",
+  "batch_ended_at": "2026-11-07T08:47:07+00:00"
+}

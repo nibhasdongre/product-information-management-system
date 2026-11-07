@@ -1,0 +1,16 @@
+{
+  "catalog": "Jack&Jones",
+  "pdf_pages": 94,
+  "pages_ok": 0,
+  "pages_error": 0,
+  "pages_pending": 94,
+  "attempts": 0,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "cost_usd": 0,
+  "render_s": 0,
+  "api_s": 0,
+  "total_s": 0,
+  "mean_page_s": 0.0,
+  "max_page_s": 0.0
+}

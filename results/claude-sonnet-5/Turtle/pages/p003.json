@@ -1,0 +1,27 @@
+{
+  "status": "ok",
+  "catalog": "Turtle",
+  "page": 3,
+  "model": "claude-sonnet-5",
+  "dpi": 150,
+  "model_dpi": 150,
+  "page_type": "non_product",
+  "image": {
+    "action": "skip",
+    "file": null,
+    "shared": false,
+    "distinct_products": []
+  },
+  "products": [],
+  "metrics": {
+    "mode": "batch",
+    "attempts": 1,
+    "input_tokens": 5444,
+    "output_tokens": 58,
+    "cost_usd": 0.005734,
+    "render_s": 0.289,
+    "api_s": 0.0,
+    "total_s": 0.289
+  },
+  "history": []
+}

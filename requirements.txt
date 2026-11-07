@@ -1,0 +1,6 @@
+anthropic>=0.40
+pymupdf>=1.24
+PyYAML>=6.0
+python-dotenv>=1.0
+jsonschema>=4.20
+httpx

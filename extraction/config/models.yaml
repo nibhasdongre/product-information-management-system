@@ -1,0 +1,10 @@
+# One record per model. The key is the model id sent to the API.
+# Prices are USD per million tokens at standard (non-batch) rates.
+# batch_discount is the multiplier applied to standard prices for Batch API calls.
+models:
+  claude-sonnet-5:
+    provider: claude
+    max_output_tokens: 8192
+    input_usd_per_mtok: 2.00
+    output_usd_per_mtok: 10.00
+    batch_discount: 0.5

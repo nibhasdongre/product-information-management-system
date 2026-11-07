@@ -1,0 +1,13 @@
+# Relative paths resolve against pim/extraction/. Override with PIM_CATALOG_DIR / PIM_OUTPUT_DIR.
+catalog_dir: data/catalogs
+output_dir: data/runs
+render_dpi: 150
+default_model: claude-sonnet-5
+retry:
+  tries: 5
+  base_s: 2.0
+  cap_s: 30.0
+# Batch API limits per batch: 100,000 requests and 256 MB are the hard caps; stay well under.
+batch:
+  max_requests: 10000
+  max_mb: 200

@@ -52,6 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("list", help="List catalogs found in the catalog directory.")
 
+    db_cmd = sub.add_parser("db", help="Database: check the connection and schema, apply migrations.")
+    db_sub = db_cmd.add_subparsers(dest="db_command", required=True)
+    db_sub.add_parser("check", help="Print server version; confirm the 12 tables exist with RLS on.")
+    db_sub.add_parser("migrate", help="Apply supabase/migrations/*.sql (only into an empty schema).")
+
     run = sub.add_parser("run", help="Extract synchronously, then print the cost report.")
     run.add_argument("catalogs", nargs="*", help="Catalog keys (PDF file stems). Default: all.")
     run.add_argument("--model", help="Model name from config/models.yaml. Default: settings.default_model.")
@@ -159,14 +164,41 @@ def _run_batch(args, settings) -> int:
         return 0
 
 
+def _run_db(args) -> int:
+    from pipeline import db
+
+    with db.connect() as conn:
+        if args.db_command == "migrate":
+            existing = [t for t in db.EXPECTED_TABLES if t not in db.check(conn)["missing"]]
+            if existing:
+                print(f"Refusing to migrate: tables already exist: {', '.join(existing)}", file=sys.stderr)
+                return 1
+            for path in sorted(db.MIGRATIONS_DIR.glob("*.sql")):
+                db.apply_migration(conn, path)
+                print(f"applied {path.name}")
+        result = db.check(conn)
+    print(result["version"])
+    if result["missing"]:
+        print("MISSING tables:", ", ".join(result["missing"]))
+    if result["no_rls"]:
+        print("RLS OFF on:", ", ".join(result["no_rls"]))
+    ok = not result["missing"] and not result["no_rls"]
+    print(f"{len(db.EXPECTED_TABLES) - len(result['missing'])}/{len(db.EXPECTED_TABLES)} tables, "
+          f"RLS {'on for all' if ok else 'INCOMPLETE'}")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     env_file = PACKAGE_ROOT.parent / ".env"
     load_dotenv(env_file, override=True)
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    logging.getLogger(__name__).info("env file %s exists=%s; ANTHROPIC_API_KEY set=%s prefix=%s",
-                                     env_file, env_file.exists(), bool(key), key[:7])
+    logging.getLogger(__name__).info("env file %s exists=%s; ANTHROPIC_API_KEY set=%s",
+                                     env_file, env_file.exists(), bool(os.environ.get("ANTHROPIC_API_KEY")))
+
+    if args.command == "db":
+        return _run_db(args)
+
     settings = load_settings()
 
     if args.command == "list":

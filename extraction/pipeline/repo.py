@@ -66,6 +66,10 @@ class Repo:
             cur.execute(query, params)
             return cur.fetchall() if cur.description else []
 
+    def fetch(self, query: str, params: Any = None) -> list[dict[str, Any]]:
+        """Read-only query helper for reports and benchmarks."""
+        return self._all(query, params)
+
     def _one(self, query: str, params: Any = None) -> dict[str, Any] | None:
         rows = self._all(query, params)
         return rows[0] if rows else None

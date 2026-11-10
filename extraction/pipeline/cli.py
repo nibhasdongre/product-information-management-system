@@ -1,4 +1,4 @@
-"""Command-line entry point: python -m pipeline {list,report,batch,db} ..."""
+"""Command-line entry point: python -m pipeline {list,report,benchmark,batch,db} ..."""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +8,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from pipeline import batch, db, submission
+from pipeline import batch, benchmark, db, submission
 from pipeline.config import PACKAGE_ROOT, get_model, load_models, load_settings
 from pipeline.db import LockHeld
 from pipeline.pdf import catalog_path, discover, open_catalog
@@ -58,6 +58,18 @@ def _build_parser() -> argparse.ArgumentParser:
     report.add_argument("catalogs", nargs="*", help="Catalog keys. Default: all registered catalogs.")
     report.add_argument("--model", help="Model name whose results to report. Default: settings.default_model.")
     report.add_argument("--detail", action="store_true", help="Also print a row per page.")
+
+    bench = sub.add_parser("benchmark", help="Cost, latency, reliability and (with an audit sheet) accuracy.")
+    bench.add_argument("catalogs", nargs="*", help="Catalog keys. Default: all registered catalogs.")
+    bench.add_argument("--model", help="Model name. Default: settings.default_model.")
+    bench.add_argument("--export-audit", metavar="CSV", help="Write a sample audit sheet to fill in, then exit.")
+    bench.add_argument("--audit-size", type=int, default=100, help="Pages in the audit sample. Default: 100.")
+    bench.add_argument("--seed", type=int, default=1, help="Sampling seed, so a sample can be reproduced.")
+    bench.add_argument("--audit", metavar="CSV", help="Filled-in audit sheet: adds accuracy and fabrication.")
+    bench.add_argument("--project-pages", type=int, help="Project the cost for this many pages.")
+    bench.add_argument("--manual-min-per-product", type=float, help="Measured manual entry time per product.")
+    bench.add_argument("--assisted-min-per-product", type=float, help="Measured review time per product.")
+    bench.add_argument("--json", metavar="PATH", help="Also write the numbers as JSON.")
 
     batch_cmd = sub.add_parser("batch", help="Batch API at half price: submit, status, collect.")
     batch_sub = batch_cmd.add_subparsers(dest="batch_command", required=True)
@@ -193,6 +205,11 @@ def main(argv: list[str] | None = None) -> int:
         with db.connect(autocommit=True) as conn:
             _print_report(Repo(conn, model.name), args.catalogs, args.detail)
         return 0
+
+    if args.command == "benchmark":
+        model = get_model(load_models(), args.model or settings.default_model)
+        with db.connect(autocommit=True) as conn:
+            return benchmark.run(Repo(conn, model.name), args)
 
     try:
         return _run_batch(args, settings)

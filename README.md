@@ -66,6 +66,7 @@ Run from `extraction/`. Replace `Turtle` with a catalogue key. Batch is the only
 |---|---|
 | `python -m pipeline list` | Lists PDFs in the catalogue folder with page counts. |
 | `python -m pipeline report [catalogues] [--detail]` | Pages, cost and tokens per catalogue, plus a batch table. Reads the database; no API calls. |
+| `python -m pipeline benchmark [catalogues] [options]` | Cost, latency, reliability and accuracy numbers. See Benchmarks. |
 | `python -m pipeline batch submit [catalogues] [--pages 1,3-5]` | Sends pending pages as batches at half price. |
 | `python -m pipeline batch status` | Reconciles unresolved submissions, then shows batch progress. |
 | `python -m pipeline batch collect` | Writes results for ended batches. |
@@ -108,6 +109,31 @@ Use one database per API key. Candidate batches are matched by time and request 
 | Page images | `<output>/<model>/<catalogue>/images/`, path in `extraction_data.image_path` |
 
 Weights such as "247 gms" are parsed into a number and unit only when clearly valid; otherwise they are left empty and remain in the raw output. A product's subcategory is set only when the page prints both a category and a subcategory.
+
+## Benchmarks
+
+`python -m pipeline benchmark` prints every number in one report, grouped by how far it can be trusted. It makes no API calls.
+
+| Group | Numbers | Needs |
+|---|---|---|
+| Measured | cost per page, per product, wasted spend on failed tries, batch turnaround p50/p95 and min/max, pages per hour, page success, retry and unresolved-submission rates, price-not-found and low-confidence shares | the database only |
+| Reviewed | field and product correction rate, deleted and added rows (product table compared with the raw model output) | catalogues with level-1 review done; not available until the review UI exists |
+| Audited | name precision, recall and F1, missing-product rate, price accuracy, price fabrication rate, correction rate, error rate by confidence | a filled-in audit sheet |
+| Business | hours saved | `--manual-min-per-product` and `--assisted-min-per-product`, timed by a person |
+
+Every rate shows its sample size and a 95% confidence interval, so a small sample cannot look more certain than it is. Batch turnaround percentiles need many batches; with fewer than 20 the report says to read min and max.
+
+Audit workflow:
+
+```powershell
+python -m pipeline benchmark --export-audit audit.csv --audit-size 100
+# open audit.csv: for each product set name_correct (y/n) and price_check
+# (correct, wrong, fabricated, missing, none); on the first row of each page set
+# missed_on_page (0 if no product was missed)
+python -m pipeline benchmark --audit audit.csv --project-pages 5000
+```
+
+`--project-pages N` scales the measured cost per page to N pages; use the size of the catalogue set you want to price. The audit sample is random and spread across catalogues; the same `--seed` reproduces it. Non-product pages are included so missed products can be found. The export refuses to overwrite an existing sheet. Add `--json out.json` to keep the numbers.
 
 ## Tests
 

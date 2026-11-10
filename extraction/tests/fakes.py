@@ -25,7 +25,8 @@ from pipeline.providers.base import (  # noqa: E402
     PageExtraction,
     Provider,
 )
-from pipeline.store import OutputStore  # noqa: E402
+from pipeline import db  # noqa: E402
+from pipeline.repo import Repo  # noqa: E402
 
 CRASH_EXIT_CODE = 7
 
@@ -156,20 +157,31 @@ def make_pdf(path: Path, pages: int) -> None:
 class Env:
     settings: Settings
     model: ModelSpec
-    store: OutputStore
+    repo: Repo
+    conn: object
     server: FakeServer
     catalog_dir: Path
 
-    @property
-    def lock_path(self) -> Path:
-        return self.store._submissions_dir() / ".lock"
+    def q(self, query: str, params=None) -> list[dict]:
+        return self.repo._all(query, params)
+
+    def page_statuses(self) -> list[str]:
+        return [row["status"] for row in self.q("select status from page_extractions order by page")]
+
+    def submissions(self, state: str | None = None) -> list[dict]:
+        rows = self.q("select submission_id::text as submission_id, state, candidate_batch_id, anthropic_batch_id, "
+                      "created_at, batch_created_at, batch_ended_at from batch_submissions order by created_at")
+        return [r for r in rows if state is None or r["state"] == state]
 
 
-def make_env(base: Path, pages: int = 3) -> Env:
+def make_env(base: Path, pages: int = 3, conn=None) -> Env:
+    """Settings, fake Batch API and a repository on the current test schema. Safe to call again
+    from a child process: it reuses the PDF and the fake server file that already exist."""
     catalog_dir = base / "catalogs"
     output_dir = base / "runs"
     catalog_dir.mkdir(parents=True, exist_ok=True)
-    make_pdf(catalog_dir / "Test.pdf", pages)
+    if not (catalog_dir / "Test.pdf").exists():
+        make_pdf(catalog_dir / "Test.pdf", pages)
     settings = Settings(
         catalog_dir=catalog_dir,
         output_dir=output_dir,
@@ -181,6 +193,5 @@ def make_env(base: Path, pages: int = 3) -> Env:
     )
     model = ModelSpec(name="claude-sonnet-5", provider="claude", max_output_tokens=8192,
                       input_usd_per_mtok=2.0, output_usd_per_mtok=10.0, batch_discount=0.5)
-    store = OutputStore(output_dir, model.name)
-    server = FakeServer(base / "server.json")
-    return Env(settings, model, store, server, catalog_dir)
+    conn = conn or db.connect(autocommit=True)
+    return Env(settings, model, Repo(conn, model.name), conn, FakeServer(base / "server.json"), catalog_dir)

@@ -1,29 +1,12 @@
-"""Live database checks. Skipped unless DATABASE_URL is set. Every write is rolled back."""
+"""Live database checks on a throwaway schema built from the migration files (see conftest.py).
+Skipped unless DATABASE_URL is set. The real project database is never touched."""
 from __future__ import annotations
-
-import os
-import sys
-from pathlib import Path
 
 import psycopg
 import pytest
-from dotenv import load_dotenv
+from psycopg import sql
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-load_dotenv(ROOT.parent / ".env")
-
-pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL not set")
-
-from pipeline import db  # noqa: E402
-
-
-@pytest.fixture
-def conn():
-    with db.connect() as c:
-        yield c
-        c.rollback()
+from pipeline import db
 
 
 def test_schema_has_all_tables_with_rls(conn):
@@ -57,5 +40,12 @@ def test_brand_names_unique_after_normalising(conn):
 
 def test_anon_role_sees_nothing(conn):
     _page(conn)
-    conn.execute("set local role anon")
-    assert conn.execute("select count(*) from page_extractions").fetchone()[0] == 0
+    # Supabase grants anon access to the public schema by default; give the test schema the same
+    # grants, so a zero count below is down to RLS and not a missing privilege.
+    schema = sql.Identifier(conn.execute("select current_schema()").fetchone()[0])
+    conn.execute(sql.SQL("grant usage on schema {} to anon").format(schema))
+    conn.execute(sql.SQL("grant select on all tables in schema {} to anon").format(schema))
+    assert conn.execute("select count(*) from page_extractions").fetchone()[0] == 1
+    with conn.transaction():
+        conn.execute("set local role anon")
+        assert conn.execute("select count(*) from page_extractions").fetchone()[0] == 0

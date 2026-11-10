@@ -7,14 +7,11 @@ import anthropic
 import httpx
 import pytest
 
-from fakes import make_env
-
 from pipeline import submission
 from pipeline.config import ModelSpec, RetrySettings
 from pipeline.providers import claude as claude_module
 from pipeline.providers.base import BatchRejected
 from pipeline.providers.claude import ClaudeProvider
-from pipeline.store import RELEASED
 
 REQUEST = httpx.Request("POST", "https://api.anthropic.com/v1/messages/batches")
 
@@ -114,12 +111,12 @@ def test_error_that_only_mentions_429_is_not_a_refusal(sleeps):
     assert script.calls == 1
 
 
-def test_exhausted_429_releases_pages_in_the_submission_flow(tmp_path, sleeps):
-    env = make_env(tmp_path)
+def test_exhausted_429_releases_pages_in_the_submission_flow(env, sleeps):
     provider, script = make_provider([received_429("1")] * 3, tries=3)
     with pytest.raises(BatchRejected):
-        submission.submit(provider=provider, model=env.model, store=env.store, settings=env.settings,
+        submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
                           catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
-    assert env.store.list_intents() == []
-    assert env.store.list_manifests() == []
-    assert all(env.store.load_page("Test", p)["status"] == RELEASED for p in (1, 2, 3))
+    assert env.repo.unresolved() == []
+    assert [s["state"] for s in env.submissions()] == ["released"]
+    assert env.submissions()[0]["anthropic_batch_id"] is None
+    assert env.page_statuses() == ["released"] * 3

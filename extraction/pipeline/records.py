@@ -1,73 +1,61 @@
-"""Page record format, shared by the synchronous and batch paths. A page file
-always has the same shape, whichever path produced it."""
+"""Turn one model product (the raw JSON) into a `product` table row.
+
+The raw output is kept untouched in extraction_data; this builds the reviewer-editable copy.
+Anything the schema cannot hold cleanly is left null here and stays recoverable from the raw
+output, so a malformed value never fails the whole page."""
 from __future__ import annotations
 
+import re
+from decimal import Decimal
 from typing import Any
 
-from pipeline.config import ModelSpec
-from pipeline.images import image_plan, page_image_name
-from pipeline.providers.base import CallMetrics, PageExtraction
+_WEIGHT = re.compile(
+    r"^\s*(\d+(?:[.,]\d+)*)\s*(kgs?|g|gms?|grams?|mg|ltrs?|litres?|liters?|l|ml|oz|lbs?)\b", re.IGNORECASE)
+_THOUSANDS = re.compile(r"^\d{1,3}(,\d{3})+(\.\d+)?$")
+_MAX_NUMERIC = 10 ** 9
 
 
-def metrics_block(metrics: CallMetrics, render_s: float, model: ModelSpec) -> dict[str, Any]:
+def parse_weight(text: Any) -> tuple[Decimal | None, str | None]:
+    """'247 gms' -> (247, 'gms'). Anything not clearly a number plus a known unit -> (None, None)."""
+    if not isinstance(text, str):
+        return None, None
+    match = _WEIGHT.match(text)
+    if not match:
+        return None, None
+    number, unit = match.group(1), match.group(2).lower()
+    if "," in number:
+        if not _THOUSANDS.match(number):
+            return None, None
+        number = number.replace(",", "")
+    value = Decimal(number)
+    return (value, unit) if value < _MAX_NUMERIC else (None, None)
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if abs(value) < _MAX_NUMERIC * 10 else None
+
+
+def product_row(product: dict[str, Any], position: int) -> dict[str, Any]:
+    flags = [str(f) for f in product.get("extraction_flags") or []]
+    confidence = _number(product.get("confidence"))
+    if confidence is not None and not 0 <= confidence <= 1:
+        confidence = None
+        flags.append("confidence_out_of_range")
+    weight, weight_unit = parse_weight(product.get("weight"))
     return {
-        "mode": "batch" if metrics.batch else "sync",
-        "attempts": metrics.attempts,
-        "input_tokens": metrics.input_tokens,
-        "output_tokens": metrics.output_tokens,
-        "cost_usd": round(model.cost_usd(metrics.input_tokens, metrics.output_tokens, batch=metrics.batch), 6),
-        "render_s": round(render_s, 3),
-        "api_s": round(metrics.api_s, 3),
-        "total_s": round(render_s + metrics.total_s, 3),
-    }
-
-
-def history_of(prior: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Attempts recorded by earlier runs, so a retried page keeps the cost of its failures."""
-    if prior is None:
-        return []
-    past = list(prior.get("history", []))
-    if "metrics" in prior:
-        past.append({"status": prior.get("status"), "error": prior.get("error"),
-                     "metrics": prior["metrics"]})
-    return past
-
-
-def success_record(catalog: str, page: int, dpi: int, model_dpi: int, model: ModelSpec,
-                   extraction: PageExtraction, render_s: float,
-                   history: list[dict[str, Any]]) -> tuple[dict[str, Any], str | None]:
-    plan = image_plan(extraction.products)
-    image_file = page_image_name(catalog, page) if plan.needs_image else None
-    record = {
-        "status": "ok",
-        "catalog": catalog,
-        "page": page,
-        "model": model.name,
-        "dpi": dpi,
-        "model_dpi": model_dpi,
-        "page_type": extraction.page_type,
-        "image": {
-            "action": plan.action,
-            "file": image_file,
-            "shared": plan.shared,
-            "distinct_products": list(plan.distinct_names),
-        },
-        "products": [{**product, "image_file": image_file} for product in extraction.products],
-        "metrics": metrics_block(extraction.metrics, render_s, model),
-        "history": history,
-    }
-    return record, image_file
-
-
-def error_record(catalog: str, page: int, model: ModelSpec, message: str,
-                 metrics: CallMetrics, render_s: float,
-                 history: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
-        "status": "error",
-        "catalog": catalog,
-        "page": page,
-        "model": model.name,
-        "error": message,
-        "metrics": metrics_block(metrics, render_s, model),
-        "history": history,
+        "position": position,
+        "product_name": str(product.get("product_name") or "").strip(),
+        "product_description": product.get("product_description"),
+        "variant": product.get("variant_label"),
+        "price_amount": _number(product.get("price_amount")),
+        "price_currency": (product.get("price_currency") or "").strip() or "INR",
+        "tax_note": product.get("tax_note"),
+        "weight": weight,
+        "weight_unit": weight_unit,
+        "confidence": confidence,
+        "extraction_flags": flags,
+        "category": (product.get("category") or "").strip() or None,
+        "subcategory": (product.get("subcategory") or "").strip() or None,
     }

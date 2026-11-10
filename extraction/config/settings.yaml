@@ -10,4 +10,4 @@ retry:
 # Batch API limits per batch: 100,000 requests and 256 MB are the hard caps; stay well under.
 batch:
   max_requests: 10000
-  max_mb: 200
+  max_mb: 100

@@ -1,13 +1,13 @@
 """Regression tests for two issues found in the real-API runs:
 - a page selection like "1-" crashed with a traceback instead of a usage error
-- a batch created five minutes before an intent was treated as its candidate
+- a batch created five minutes before a submission was treated as its candidate
 """
 import argparse
 from datetime import timedelta
 
 import pytest
 
-from fakes import FakeProvider, make_env
+from fakes import FakeProvider
 
 from pipeline import submission
 from pipeline.cli import _build_parser, _parse_pages
@@ -30,19 +30,16 @@ def test_cli_reports_bad_page_selection_as_usage_error(capsys):
     assert "invalid page selection" in capsys.readouterr().err
 
 
-def test_batch_created_five_minutes_before_the_intent_is_not_a_candidate(tmp_path):
-    env = make_env(tmp_path)
+def test_batch_created_five_minutes_before_the_submission_is_not_a_candidate(env):
     failing = FakeProvider(env.server, fail_before_send=True)
     with pytest.raises(submission.SubmissionUnknown):
-        submission.submit(provider=failing, model=env.model, store=env.store, settings=env.settings,
+        submission.submit(provider=failing, model=env.model, repo=env.repo, settings=env.settings,
                           catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
-    intent = env.store.list_intents()[0]
-    created = submission._parse(intent["created_at"])
+    created = env.submissions()[0]["created_at"]
 
     env.server.create(["zz0000-00000", "zz0000-00001", "zz0000-00002"],
                       created_at=created - timedelta(minutes=5))
     provider = FakeProvider(env.server)
-    with env.store.lock():
-        messages = submission.reconcile(provider, env.store)
-    assert env.store.list_intents()[0]["candidate_batch_id"] is None
+    messages = submission.reconcile(provider, env.repo)
+    assert env.submissions()[0]["candidate_batch_id"] is None
     assert any("no batch found yet" in m for m in messages)

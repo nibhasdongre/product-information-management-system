@@ -1,11 +1,14 @@
 """Collecting a finished batch: what lands in the database, and that it is safe to repeat."""
 from decimal import Decimal
 
+import pytest
+
 from fakes import FakeProvider
 
 from pipeline import batch, submission
 from pipeline.providers.base import PageExtraction
 from pipeline.report import catalog_rows
+from pipeline.storage import StorageNotFound, pdf_key
 
 
 class RichProvider(FakeProvider):
@@ -136,6 +139,23 @@ def test_a_renamed_copy_of_a_registered_pdf_is_the_same_catalog(env):
     first = env.repo.ensure_catalog("Test", env.catalog_dir / "Test.pdf", env.storage)
     assert env.repo.ensure_catalog("Other_Name", copy, env.storage) == first
     assert env.q("select count(*) as n from catalog")[0]["n"] == 1
+
+
+def test_a_catalogue_registered_before_pdfs_lived_in_storage_gets_its_pdf_uploaded(env):
+    pdf = env.catalog_dir / "Test.pdf"
+    cid = env.repo.ensure_catalog("Test", pdf, env.storage)
+    sha = env.q("select file_sha256 from catalog")[0]["file_sha256"]
+    env.conn.execute("update catalog set storage_path = %s, page_count = null where catalog_id = %s",
+                     (r"C:\old\Test.pdf", cid))
+    env.storage.delete(pdf_key(sha))
+    assert env.repo.ensure_catalog("Test", pdf, env.storage) == cid           # same catalogue, now repaired
+    row = env.q("select storage_path, page_count from catalog")[0]
+    assert row["storage_path"] == pdf_key(sha) and row["page_count"] == 3
+    assert env.storage.get(pdf_key(sha)) == pdf.read_bytes()
+    env.storage.delete(pdf_key(sha))
+    assert env.repo.ensure_catalog("Test", pdf, env.storage) == cid           # already repaired: nothing is uploaded again
+    with pytest.raises(StorageNotFound):
+        env.storage.get(pdf_key(sha))
 
 
 def test_pdf_is_stored_and_collect_needs_only_the_database(env):

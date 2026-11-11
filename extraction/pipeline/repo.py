@@ -87,8 +87,12 @@ class Repo:
         sha = file_sha256(path)
         with pymupdf.open(str(path)) as doc:
             page_count = doc.page_count
-        row = self._one("select catalog_id from catalog where file_sha256 = %s", (sha,))
+        row = self._one("select catalog_id, storage_path from catalog where file_sha256 = %s", (sha,))
         if row:
+            if row["storage_path"] != pdf_key(sha):       # registered before PDFs lived in storage
+                storage.put_file(pdf_key(sha), path, "application/pdf")
+                self.conn.execute("update catalog set storage_path = %s where catalog_id = %s",
+                                  (pdf_key(sha), row["catalog_id"]))
             self.conn.execute("update catalog set page_count = %s where catalog_id = %s and page_count is null",
                               (page_count, row["catalog_id"]))
             return row["catalog_id"]

@@ -8,7 +8,8 @@ from psycopg import sql
 
 from pipeline import db
 
-INIT = db.migration_files()[0]            # (version, name, path) of the real first schema
+FILES = db.migration_files()
+INIT = FILES[0]                           # (version, name, path) of the real first schema
 
 
 def recorded(conn) -> list[str]:
@@ -42,9 +43,9 @@ def test_file_names_are_checked(tmp_path):
 
 def test_a_fresh_database_gets_each_migration_once_and_it_is_recorded(fresh_schema):
     messages = db.migrate(fresh_schema)
-    assert messages == [f"applied {INIT[2].name}"]
+    assert messages == [f"applied {path.name}" for _, _, path in FILES]
     assert db.check(fresh_schema)["missing"] == [] and db.check(fresh_schema)["no_rls"] == []
-    assert recorded(fresh_schema) == [INIT[0]]
+    assert recorded(fresh_schema) == [version for version, _, _ in FILES]
     assert db.migrate(fresh_schema) == []                      # nothing left to do
 
 
@@ -52,8 +53,9 @@ def test_a_database_from_before_tracking_is_baselined_not_rebuilt(fresh_schema):
     db.apply_migration(fresh_schema, INIT[2])                  # built the old way: tables exist, nothing recorded
     fresh_schema.execute("insert into brand (brand_name) values ('Kept')")
     messages = db.migrate(fresh_schema)
-    assert len(messages) == 1 and messages[0].startswith("baseline")
-    assert recorded(fresh_schema) == [INIT[0]]
+    assert messages[0].startswith("baseline")
+    assert messages[1:] == [f"applied {path.name}" for _, _, path in FILES[1:]]    # the rest still apply
+    assert recorded(fresh_schema) == [version for version, _, _ in FILES]
     assert fresh_schema.execute("select count(*) from brand").fetchone()[0] == 1     # data untouched
     assert db.migrate(fresh_schema) == []
 

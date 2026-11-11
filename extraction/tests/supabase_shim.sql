@@ -20,3 +20,14 @@ create table if not exists auth.users (
 create or replace function auth.uid() returns uuid
 language sql stable
 as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+
+-- Supabase Storage keeps files in storage.objects, with row-level security. The review migration adds a
+-- read policy on it; this stand-in lets the tests check that policy.
+create schema if not exists storage;
+create table if not exists storage.objects (
+  bucket_id text,
+  name      text
+);
+alter table storage.objects enable row level security;
+grant usage on schema storage to anon, authenticated;
+grant select on storage.objects to anon, authenticated;

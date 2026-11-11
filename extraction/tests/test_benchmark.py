@@ -128,16 +128,23 @@ def test_measured_reviewed_and_audited_numbers_end_to_end(env, tmp_path):
     # A reviewer finishes level 1 after changing a price and deleting a row.
     cid = env.q("select catalog_id from catalog")[0]["catalog_id"]
     first = env.q("select extraction_id from page_extractions order by page limit 1")[0]["extraction_id"]
-    env.conn.execute("insert into review (catalog_id, reviewer_1_id, level_1_at) values (%s, gen_random_uuid(), now())", (cid,))
-    env.conn.execute("update product set price_amount = 120 where extraction_id = %s and position = 1", (first,))
-    env.conn.execute("delete from product where extraction_id = %s and position = 2", (first,))
-    rv = benchmark.reviewed(env.repo, None)
-    assert (rv["pages"], rv["raw_products"], rv["matched"], rv["deleted"], rv["added"]) == (3, 6, 5, 1, 0)
-    assert rv["by_field"]["price_amount"] == 1
-    assert (rv["product_correction"]["k"], rv["field_correction"]["k"]) == (1, 1)
+    reviewer = env.q("select gen_random_uuid() as id")[0]["id"]
+    env.conn.execute("insert into auth.users (id, email) values (%s, 'bench@t.example')", (reviewer,))
+    env.conn.execute("insert into app_user (user_id, email, role) values (%s, 'bench@t.example', 'reviewer')", (reviewer,))
+    try:
+        env.conn.execute("insert into review (catalog_id, reviewer_1_id, level_1_at) values (%s, %s, now())", (cid, reviewer))
+        env.conn.execute("update product set price_amount = 120 where extraction_id = %s and position = 1", (first,))
+        env.conn.execute("delete from product where extraction_id = %s and position = 2", (first,))
+        rv = benchmark.reviewed(env.repo, None)
+        assert (rv["pages"], rv["raw_products"], rv["matched"], rv["deleted"], rv["added"]) == (3, 6, 5, 1, 0)
+        assert rv["by_field"]["price_amount"] == 1
+        assert (rv["product_correction"]["k"], rv["field_correction"]["k"]) == (1, 1)
 
-    text = benchmark.render(benchmark.build(env.repo, None, sheet, None, 6.0, 1.5))
-    assert "name precision" in text and "price fabrication" in text and "75% less" in text
+        text = benchmark.render(benchmark.build(env.repo, None, sheet, None, 6.0, 1.5))
+        assert "name precision" in text and "price fabrication" in text and "75% less" in text
+    finally:
+        env.conn.execute("delete from review")
+        env.conn.execute("delete from auth.users where id = %s", (reviewer,))      # cascades to app_user
 
 
 def test_audit_sheet_problems_are_reported_not_hidden(tmp_path):

@@ -26,7 +26,7 @@ load_dotenv(ROOT.parent / ".env")
 
 from pipeline import db  # noqa: E402
 
-_TRUNCATE = ("truncate product_tag, tag, product, extraction_attempts, extraction_data, page_extractions, "
+_TRUNCATE = ("truncate review_log, review_edit, review_page_seen, app_user, product_tag, tag, product, extraction_attempts, extraction_data, page_extractions, "
              "batch_submissions, review, catalog, brand, subcategory, category restart identity cascade")
 
 

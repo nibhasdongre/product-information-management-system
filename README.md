@@ -2,7 +2,7 @@
 
 Turns vendor catalogue PDFs into structured product records. Claude Sonnet 5 reads each page through the Batch API (half price); results are stored in Supabase Postgres, and the catalogue PDFs in Supabase Storage, ready for review and the storefront.
 
-Status: the extraction pipeline runs on the database and object storage. The review UI, storefront and hourly worker are not built yet.
+Status: the extraction pipeline runs on the database and object storage. The review backend (database functions and rules) is built and tested; the review UI, crop publisher, storefront and hourly worker are not built yet.
 
 ## Layout
 
@@ -48,6 +48,23 @@ python -m pipeline db check
 ```
 
 `db migrate` applies every migration in `supabase/migrations/` that has not been applied yet, in order, and records each one in `supabase_migrations.schema_migrations` (the table the Supabase CLI uses, so `supabase db push` can take over later). Each migration and its record are written in one transaction, so a failing migration changes nothing and is retried next time. A database built before tracking existed is recognised and baselined without being rebuilt. Add a schema change as a new file named `<14-digit timestamp>_<name>.sql`; never edit one that has been applied. `db check` prints the server version and confirms the 12 tables exist with row-level security on. RLS is enabled on every table with no policies, so the public Supabase API returns nothing until policies are added.
+
+## Review backend
+
+The review screen talks to Postgres only through functions (`supabase/migrations/20261111000000_review_stage.sql`). They run with the table owner's rights and check who is calling, so the rules hold whatever the screen does. The tables stay locked: a browser cannot read or write them directly. Call them from supabase-js with `supabase.rpc('rv_open', {cid: 1})`; parameter names are in the SQL.
+
+How a catalogue is reviewed:
+- **Ready** when every page has an extraction. A page whose extraction failed is shown as a non-product page, and the reviewer can add products to it.
+- **Two levels**, each a full pass by a different person. `rv_open` claims the next level for the caller or resumes their own. Only one person holds a level at a time, and the Level 1 person cannot do Level 2.
+- **Drafts live on the server.** `rv_save_product`, `rv_add_product`, `rv_remove_product`, `rv_restore_product` and `rv_set_brand` change only the draft. `rv_get_page` returns a page with the draft laid over it and records that the page was viewed.
+- **`rv_finish`** needs every page viewed and every product to have a name, a price and a currency. It then applies all edits in one transaction, or none, and writes the audit trail. `rv_release` gives a level up and discards its draft; an admin can release anyone's.
+- **Crop** is saved in `product.crop` as fractions of the page: null is the whole page, `{"none": true}` is no image, `{x, y, w, h}` is a rectangle. A changed crop clears `cropped_path`, which is the publisher's cue to cut the image again.
+- **Lists:** `rv_lists` returns brands, categories, subcategories and tags. Any signed-in user can add categories and subcategories (`rv_add_category`, `rv_add_subcategory`); tags are created when a product using them is saved at Finish.
+- **Audit:** `review_log` records every applied change with before and after values, plus claims, releases, finishes and changes to users and lists. It cannot be updated or deleted. Admins read it with `rv_audit`.
+
+Users and roles (`reviewer`, `admin`): sign-up is invite-only. Turn off public sign-ups in the Supabase dashboard (Authentication, Providers, Email), invite each person under Authentication, Users, then an admin calls `admin_add_user(email, role)`. A signed-in account with no role can do nothing. The first admin has to be inserted by hand from the SQL editor: `insert into app_user (user_id, email, role) select id, email, 'admin' from auth.users where email = 'you@example.com';`.
+
+Reviewers read the catalogue PDF straight from the private bucket: the migration adds a read policy on `storage.objects` for active users. A page tells the viewer's PDF reader the file's `storage_path` from `rv_open`.
 
 ## Storage
 

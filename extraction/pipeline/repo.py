@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+import pymupdf
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -84,8 +85,12 @@ class Repo:
         uploaded to storage before the catalog row is written, so a registered catalogue always has its
         PDF; `storage_path` holds the storage key, not a local path."""
         sha = file_sha256(path)
+        with pymupdf.open(str(path)) as doc:
+            page_count = doc.page_count
         row = self._one("select catalog_id from catalog where file_sha256 = %s", (sha,))
         if row:
+            self.conn.execute("update catalog set page_count = %s where catalog_id = %s and page_count is null",
+                              (page_count, row["catalog_id"]))
             return row["catalog_id"]
         storage.put_file(pdf_key(sha), path, "application/pdf")
         brand_name = brand_from_key(key)
@@ -96,9 +101,9 @@ class Repo:
             if brand is None:
                 brand = self._one(f"select brand_id from brand where name_key = {_BRAND_KEY}", (brand_name,))
             created = self._one(
-                "insert into catalog (catalog_name, brand_id, file_sha256, storage_path) "
-                "values (%s, %s, %s, %s) returning catalog_id",
-                (key, brand["brand_id"], sha, pdf_key(sha)))
+                "insert into catalog (catalog_name, brand_id, file_sha256, storage_path, page_count) "
+                "values (%s, %s, %s, %s, %s) returning catalog_id",
+                (key, brand["brand_id"], sha, pdf_key(sha), page_count))
         return created["catalog_id"]
 
     def page_statuses(self, catalog_id: int) -> dict[int, str]:

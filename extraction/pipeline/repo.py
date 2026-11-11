@@ -110,6 +110,31 @@ class Repo:
                 (key, brand["brand_id"], sha, pdf_key(sha), page_count))
         return created["catalog_id"]
 
+    # Publishing product images
+
+    def products_to_publish(self) -> list[dict[str, Any]]:
+        """Products of fully reviewed catalogues (both levels done) that have no published image yet.
+        A product whose crop is {"none": true} is meant to have no image and is left out."""
+        return self._all(
+            """select p.product_id, x.catalog_id, x.page, p.crop, c.storage_path, c.file_sha256
+               from product p
+               join page_extractions x on x.extraction_id = p.extraction_id
+               join catalog c on c.catalog_id = x.catalog_id
+               join review r on r.catalog_id = c.catalog_id and r.level_2_at is not null
+               where p.cropped_path is null and (p.crop is null or p.crop <> '{"none": true}'::jsonb)
+               order by x.catalog_id, x.page, p.position""")
+
+    def set_cropped_path(self, product_id: int, crop: Any, path: str) -> bool:
+        """Record the published image, unless a reviewer changed the crop in the meantime (then the
+        next run cuts it again). Returns whether it was recorded."""
+        if crop is None:
+            cur = self.conn.execute("update product set cropped_path = %s where product_id = %s "
+                                    "and cropped_path is null and crop is null", (path, product_id))
+        else:
+            cur = self.conn.execute("update product set cropped_path = %s where product_id = %s "
+                                    "and cropped_path is null and crop = %s", (path, product_id, Jsonb(crop)))
+        return cur.rowcount == 1
+
     def page_statuses(self, catalog_id: int) -> dict[int, str]:
         rows = self._all("select page, status from page_extractions where catalog_id = %s and model = %s",
                          (catalog_id, self.model))

@@ -2,7 +2,7 @@
 
 Turns vendor catalogue PDFs into structured product records. Claude Sonnet 5 reads each page through the Batch API (half price); results are stored in Supabase Postgres, and the catalogue PDFs in Supabase Storage, ready for review and the storefront.
 
-Status: the extraction pipeline runs on the database and object storage. The review backend (database functions and rules) is built and tested; the review UI, crop publisher, storefront and hourly worker are not built yet.
+Status: the extraction pipeline runs on the database and object storage. The review backend (database functions and rules) and the image publisher are built and tested; the review UI, storefront and hourly worker are not built yet.
 
 ## Layout
 
@@ -79,13 +79,29 @@ Catalogue PDFs go to a **private** Supabase Storage bucket named `catalogs` (ove
 - Create the bucket and verify the keys with `python -m pipeline storage check`. It makes the bucket if it is missing, then writes, reads back and deletes a probe object.
 - Keep the bucket private: catalogue PDFs are supplier documents and can show internal data, such as stock tables. Reviewers will get short-lived signed links; the storefront will serve only published product crops, from a separate public bucket.
 
+## Publishing images
+
+`python -m pipeline publish` turns reviewed crops into storefront images. A product is picked up once both review levels of its catalogue are done and it has no published image. Its crop (a rectangle as fractions of the page, or the whole page when unset) is cut from the PDF and saved as two WebP files in the **public** bucket `product-images` (override with `SUPABASE_PUBLIC_BUCKET`):
+
+| File | Size | Use |
+|---|---|---|
+| `products/<hash>/card.webp` | longest side 480 px | product grids |
+| `products/<hash>/detail.webp` | longest side 1600 px, never rendered above 4x the PDF's size | product page |
+
+- `product.cropped_path` holds `products/<hash>`. The storefront builds the URL as `<SUPABASE_URL>/storage/v1/object/public/product-images/<cropped_path>/card.webp`. Files are served with a one-year immutable cache header, which is safe because `<hash>` comes from the PDF, page and crop, so a name never changes meaning.
+- A product reviewed as "no image" (`crop = {"none": true}`) gets no files and keeps `cropped_path` null; the storefront shows a placeholder.
+- When a reviewer changes a crop, Finish clears `cropped_path`, and the next run cuts the new image. Old files stay in the bucket.
+- Safe to repeat and to interrupt: names are deterministic, uploads overwrite, and a product is marked published only after both files are stored and only if its crop did not change meanwhile. A failed product stays pending and is retried by the next run; the command exits `1` if any failed, and `5` if storage is unreachable.
+- Crops are fractions of the page as displayed, so rotated pages work (tested at 90, 180 and 270 degrees).
+
 ## Configuration
 
 | Setting | Where | Default |
 |---|---|---|
 | Catalogue folder | `PIM_CATALOG_DIR`, or `catalog_dir` in `config/settings.yaml` | `extraction/data/catalogs` |
 | Local storage folder | `PIM_OUTPUT_DIR`, or `output_dir` in `config/settings.yaml` | `extraction/data/runs`; used only when Supabase Storage is not configured |
-| Storage bucket | `SUPABASE_STORAGE_BUCKET` | `catalogs` |
+| Storage bucket (PDFs, private) | `SUPABASE_STORAGE_BUCKET` | `catalogs` |
+| Storage bucket (product images, public) | `SUPABASE_PUBLIC_BUCKET` | `product-images` |
 | Render resolution | `render_dpi` in `config/settings.yaml` | 150 |
 | Batch size limits | `batch` in `config/settings.yaml` | 10,000 requests, 100 MB (a 162 MB upload dropped its connection) |
 | Model and prices | `config/models.yaml` | `claude-sonnet-5`, batch discount 0.5 |
@@ -107,7 +123,8 @@ Run from `extraction/`. Replace `Turtle` with a catalogue key. Batch is the only
 | `python -m pipeline batch sync` | Reconcile, status and collect in one run. Suitable for a schedule. |
 | `python -m pipeline batch resolve ID --adopt BATCH` | Records a batch for a submission that needs review, if its results match. |
 | `python -m pipeline batch resolve ID --release --confirm-no-batch` | Frees a submission's pages after confirming no batch exists. |
-| `python -m pipeline storage check` | Shows which storage backend is used, creates the bucket if needed, and tests it. |
+| `python -m pipeline storage check` | Shows which storage backend is used, creates the private and public buckets if needed, and tests both. |
+| `python -m pipeline publish` | Cuts product images from the PDFs of fully reviewed catalogues and publishes them (see Publishing images). |
 | `python -m pipeline db check` / `db migrate` | See Setup. |
 
 Batch commands accept `--model`. Exit codes for `batch` commands: `0` success, `1` failed pages or invalid resolve arguments, `2` invalid API key, `3` unresolved or unknown submission, `4` another batch command holds the lock, `5` storage failed.

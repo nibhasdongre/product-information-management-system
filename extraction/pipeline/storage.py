@@ -1,7 +1,9 @@
-"""Object storage for catalogue PDFs and page images.
+"""Object storage for catalogue PDFs and published product images.
 
-Keys are the same on every backend:
-    pdfs/<sha256>.pdf                  the source catalogue (content-addressed, so a re-upload is the same object)
+Two buckets, each behind the same interface. Keys are the same on every backend:
+    pdfs/<sha256>.pdf                  the source catalogue, in the private bucket (content-addressed)
+    products/<hash>/card.webp          published product images, in the public bucket
+    products/<hash>/detail.webp        (the hash comes from the PDF, page and crop, so a name never changes meaning)
 
 Two backends: Supabase Storage (REST, private bucket, service key) and a local folder for tests and
 for working offline. Uploads overwrite (upsert), so every write is safe to repeat; that is why storage
@@ -24,6 +26,7 @@ from pipeline.durable import write_atomic
 logger = logging.getLogger(__name__)
 
 DEFAULT_BUCKET = "catalogs"
+DEFAULT_PUBLIC_BUCKET = "product-images"
 
 
 class StorageError(RuntimeError):
@@ -40,8 +43,9 @@ def pdf_key(sha256: str) -> str:
 
 class Storage(ABC):
     @abstractmethod
-    def put(self, key: str, data: bytes, content_type: str) -> None:
-        """Write the object, replacing any existing one."""
+    def put(self, key: str, data: bytes, content_type: str, cache_control: str | None = None) -> None:
+        """Write the object, replacing any existing one. cache_control is the Cache-Control header the
+        object is served with, where the backend serves it (Supabase does; a local folder does not)."""
 
     @abstractmethod
     def get(self, key: str) -> bytes:
@@ -77,7 +81,7 @@ class LocalStorage(Storage):
             raise StorageError(f"invalid storage key {key!r}")
         return path
 
-    def put(self, key: str, data: bytes, content_type: str) -> None:
+    def put(self, key: str, data: bytes, content_type: str, cache_control: str | None = None) -> None:
         write_atomic(self._path(key), data)
 
     def get(self, key: str) -> bytes:
@@ -94,9 +98,10 @@ class LocalStorage(Storage):
 
 
 class SupabaseStorage(Storage):
-    def __init__(self, url: str, secret_key: str, bucket: str = DEFAULT_BUCKET, *,
+    def __init__(self, url: str, secret_key: str, bucket: str = DEFAULT_BUCKET, *, public: bool = False,
                  client: httpx.Client | None = None, tries: int = 3,
                  sleep: Callable[[float], None] = time.sleep):
+        self._public = public
         self._url = url.rstrip("/")
         self._base = f"{self._url}/storage/v1"
         self._bucket = bucket
@@ -139,9 +144,11 @@ class SupabaseStorage(Storage):
     def _fail(what: str, response: httpx.Response) -> StorageError:
         return StorageError(f"{what}: HTTP {response.status_code} {response.text[:200]}")
 
-    def put(self, key: str, data: bytes, content_type: str) -> None:
-        response = self._request("POST", f"/object/{self._object(key)}", content=data,
-                                 headers={"x-upsert": "true", "Content-Type": content_type})
+    def put(self, key: str, data: bytes, content_type: str, cache_control: str | None = None) -> None:
+        headers = {"x-upsert": "true", "Content-Type": content_type}
+        if cache_control:
+            headers["cache-control"] = cache_control
+        response = self._request("POST", f"/object/{self._object(key)}", content=data, headers=headers)
         if response.status_code >= 400:
             raise self._fail(f"upload {key}", response)
 
@@ -159,13 +166,13 @@ class SupabaseStorage(Storage):
             raise self._fail(f"delete {key}", response)
 
     def ensure_bucket(self) -> bool:
-        """Create the private bucket if it does not exist. Returns True if it was created."""
+        """Create the bucket (private, or public for product images) if it does not exist. Returns True if created."""
         response = self._request("GET", f"/bucket/{quote(self._bucket, safe='')}")
         if response.status_code < 400:
             return False
         if not self._missing(response):
             raise self._fail("look up bucket", response)
-        created = self._request("POST", "/bucket", json={"id": self._bucket, "name": self._bucket, "public": False})
+        created = self._request("POST", "/bucket", json={"id": self._bucket, "name": self._bucket, "public": self._public})
         if created.status_code == 409:
             return False
         if created.status_code >= 400:
@@ -174,19 +181,25 @@ class SupabaseStorage(Storage):
 
     def check(self) -> None:
         if self.ensure_bucket():
-            logger.info("created private bucket %r", self._bucket)
+            logger.info("created %s bucket %r", "public" if self._public else "private", self._bucket)
         super().check()
 
     def describe(self) -> str:
-        return f"Supabase Storage bucket '{self._bucket}' at {self._url}"
+        return f"Supabase Storage {'public' if self._public else 'private'} bucket '{self._bucket}' at {self._url}"
 
 
-def build_storage(output_dir: Path) -> Storage:
-    """Supabase Storage when SUPABASE_URL and SUPABASE_SECRET_KEY are both set, else a local folder."""
+def build_storage(output_dir: Path, *, public: bool = False) -> Storage:
+    """Supabase Storage when SUPABASE_URL and SUPABASE_SECRET_KEY are both set, else a local folder.
+
+    public=True gives the bucket for published product images (SUPABASE_PUBLIC_BUCKET), which the storefront
+    reads without signing in; the default is the private bucket for catalogue PDFs."""
     url = os.environ.get("SUPABASE_URL", "").strip()
     key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
     if url and key:
+        if public:
+            return SupabaseStorage(url, key, os.environ.get("SUPABASE_PUBLIC_BUCKET", "").strip() or DEFAULT_PUBLIC_BUCKET,
+                                   public=True)
         return SupabaseStorage(url, key, os.environ.get("SUPABASE_STORAGE_BUCKET", "").strip() or DEFAULT_BUCKET)
     if url or key:
         raise StorageError("set both SUPABASE_URL and SUPABASE_SECRET_KEY, or neither to use local storage")
-    return LocalStorage(Path(output_dir) / "storage")
+    return LocalStorage(Path(output_dir) / ("storage-public" if public else "storage"))

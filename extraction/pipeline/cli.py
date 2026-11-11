@@ -9,7 +9,7 @@ import sys
 import psycopg
 from dotenv import load_dotenv
 
-from pipeline import batch, benchmark, db, submission
+from pipeline import batch, benchmark, db, publish, submission
 from pipeline.config import PACKAGE_ROOT, get_model, load_models, load_settings
 from pipeline.db import LockHeld
 from pipeline.pdf import catalog_path, discover, open_catalog
@@ -56,7 +56,9 @@ def _build_parser() -> argparse.ArgumentParser:
     db_sub.add_parser("check", help="Print server version; confirm the 12 tables exist with RLS on.")
     db_sub.add_parser("migrate", help="Apply any supabase/migrations/*.sql not yet applied, and record them.")
 
-    storage_cmd = sub.add_parser("storage", help="Object storage for PDFs and page images.")
+    sub.add_parser("publish", help="Cut product images from the PDFs of fully reviewed catalogues and publish them.")
+
+    storage_cmd = sub.add_parser("storage", help="Object storage: the private PDF bucket and the public image bucket.")
     storage_sub = storage_cmd.add_subparsers(dest="storage_command", required=True)
     storage_sub.add_parser("check", help="Show which backend is used; write, read back and delete a probe object.")
 
@@ -169,14 +171,35 @@ def _run_batch(args, settings) -> int:
 
 def _run_storage(settings) -> int:
     try:
-        storage = build_storage(settings.output_dir)
-        print(f"backend: {storage.describe()}")
-        storage.check()
+        for public in (False, True):
+            storage = build_storage(settings.output_dir, public=public)
+            print(f"backend: {storage.describe()}")
+            storage.check()
     except StorageError as exc:
         print(f"storage check failed: {exc}", file=sys.stderr)
         return 5
-    print("ok: wrote, read back and deleted a probe object")
+    print("ok: wrote, read back and deleted a probe object in each bucket")
     return 0
+
+
+def _run_publish(settings) -> int:
+    try:
+        pdfs = build_storage(settings.output_dir)
+        images = build_storage(settings.output_dir, public=True)
+        logging.getLogger(__name__).info("PDFs from %s; images to %s", pdfs.describe(), images.describe())
+        with db.advisory_lock("publish"), db.connect(autocommit=True) as conn:
+            report = publish.publish(Repo(conn, settings.default_model), pdfs, images)
+    except LockHeld as exc:
+        print(f"{exc}. Wait for it to finish.", file=sys.stderr)
+        return 4
+    except StorageError as exc:
+        print(f"Stopped: storage failed: {exc}. Run `python -m pipeline storage check`.", file=sys.stderr)
+        return 5
+    print(f"published {report.published} image(s); {report.changed_meanwhile} changed during the run "
+          f"(the next run redoes them); {len(report.failed)} failed")
+    for product_id, reason in report.failed[:20]:
+        print(f"  product {product_id}: {reason}")
+    return 1 if report.failed else 0
 
 
 def _run_db(args) -> int:
@@ -221,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "storage":
         return _run_storage(settings)
+
+    if args.command == "publish":
+        return _run_publish(settings)
 
     if args.command == "report":
         model = get_model(load_models(), args.model or settings.default_model)

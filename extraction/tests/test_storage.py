@@ -147,6 +147,24 @@ def test_ensure_bucket_creates_a_private_bucket_only_when_missing():
     assert storage.ensure_bucket() is False                      # someone else created it first
 
 
+def test_a_cache_header_is_sent_only_when_asked_for():
+    handler = Recorder(ok(json={"Key": "catalogs/a"}))
+    storage, _ = make(handler)
+    storage.put("a.webp", b"x", "image/webp", "public, max-age=31536000, immutable")
+    storage.put("b.pdf", b"x", "application/pdf")
+    assert handler.requests[0].headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "cache-control" not in handler.requests[1].headers
+
+
+def test_the_image_bucket_is_created_public():
+    handler = Recorder(ok(status=404, json={"message": "Bucket not found"}), ok(json={"name": "product-images"}))
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    storage = SupabaseStorage("https://abc.supabase.co", "s3cret", "product-images", public=True, client=client)
+    assert storage.ensure_bucket() is True
+    assert json.loads(handler.requests[1].content)["public"] is True
+    assert "public bucket 'product-images'" in storage.describe()
+
+
 def test_check_runs_against_a_fake_server_and_leaves_no_object():
     objects: dict[str, bytes] = {}
 
@@ -184,3 +202,16 @@ def test_build_storage_picks_the_backend_from_the_environment(monkeypatch, tmp_p
     assert isinstance(storage, SupabaseStorage) and "catalogs" in storage.describe()
     monkeypatch.setenv("SUPABASE_STORAGE_BUCKET", "other")
     assert "other" in build_storage(tmp_path).describe()
+    images = build_storage(tmp_path, public=True)                  # the other bucket, for published product images
+    assert isinstance(images, SupabaseStorage) and "public bucket 'product-images'" in images.describe()
+    monkeypatch.setenv("SUPABASE_PUBLIC_BUCKET", "shop")
+    assert "'shop'" in build_storage(tmp_path, public=True).describe()
+
+
+def test_the_local_fallback_keeps_pdfs_and_images_apart(monkeypatch, tmp_path):
+    for name in ("SUPABASE_URL", "SUPABASE_SECRET_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    private, public = build_storage(tmp_path), build_storage(tmp_path, public=True)
+    private.put("a", b"1", "text/plain")
+    with pytest.raises(StorageNotFound):
+        public.get("a")

@@ -34,7 +34,7 @@ Create a Supabase project, then create `.env` in the repository root:
 ANTHROPIC_API_KEY=sk-ant-...
 DATABASE_URL=postgresql://postgres.PROJECTREF:PASSWORD@HOST:5432/postgres
 SUPABASE_URL=https://PROJECTREF.supabase.co
-SUPABASE_SERVICE_KEY=your-secret-key
+SUPABASE_SECRET_KEY=your-secret-key
 ```
 
 - Use the **Session pooler** string (Project Settings, Database, Connect), on port 5432. The direct host is IPv6-only, and the transaction pooler (port 6543) breaks the batch lock.
@@ -57,7 +57,7 @@ Catalogue PDFs go to a **private** Supabase Storage bucket named `catalogs` (ove
 |---|---|---|
 | Catalogue PDF | `pdfs/<sha256>.pdf` | uploaded when a catalogue is first registered; the key is stored in `catalog.storage_path` |
 
-- `SUPABASE_URL` is the Project URL, and `SUPABASE_SERVICE_KEY` is a secret (service-role) key from Project Settings, API. It bypasses all access rules, so it belongs only in `.env` and the worker's secrets, never in a browser or the web app.
+- `SUPABASE_URL` is the Project URL, and `SUPABASE_SECRET_KEY` is a secret (service-role) key from Project Settings, API. It bypasses all access rules, so it belongs only in `.env` and the worker's secrets, never in a browser or the web app.
 - Set both or neither. With neither, files go to a local folder (`<output folder>/storage`), which is how the tests run. The first line of every batch command logs which backend is in use.
 - Create the bucket and verify the keys with `python -m pipeline storage check`. It makes the bucket if it is missing, then writes, reads back and deletes a probe object.
 - Keep the bucket private: catalogue PDFs are supplier documents and can show internal data, such as stock tables. Reviewers will get short-lived signed links; the storefront will serve only published product crops, from a separate public bucket.

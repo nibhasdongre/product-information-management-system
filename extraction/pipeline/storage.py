@@ -100,7 +100,11 @@ class SupabaseStorage(Storage):
         self._url = url.rstrip("/")
         self._base = f"{self._url}/storage/v1"
         self._bucket = bucket
-        self._headers = {"apikey": secret_key, "Authorization": f"Bearer {secret_key}"}
+        # New-style secret keys (sb_secret_...) are not JWTs: send them as `apikey` only, or Storage
+        # treats the call as anonymous. The older service_role key is a JWT and also goes as Bearer.
+        self._headers = {"apikey": secret_key}
+        if not secret_key.startswith("sb_"):
+            self._headers["Authorization"] = f"Bearer {secret_key}"
         self._client = client or httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0))
         self._tries = tries
         self._sleep = sleep
@@ -178,11 +182,11 @@ class SupabaseStorage(Storage):
 
 
 def build_storage(output_dir: Path) -> Storage:
-    """Supabase Storage when SUPABASE_URL and SUPABASE_SERVICE_KEY are both set, else a local folder."""
+    """Supabase Storage when SUPABASE_URL and SUPABASE_SECRET_KEY are both set, else a local folder."""
     url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+    key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
     if url and key:
         return SupabaseStorage(url, key, os.environ.get("SUPABASE_STORAGE_BUCKET", "").strip() or DEFAULT_BUCKET)
     if url or key:
-        raise StorageError("set both SUPABASE_URL and SUPABASE_SERVICE_KEY, or neither to use local storage")
+        raise StorageError("set both SUPABASE_URL and SUPABASE_SECRET_KEY, or neither to use local storage")
     return LocalStorage(Path(output_dir) / "storage")

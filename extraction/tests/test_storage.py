@@ -171,7 +171,7 @@ def test_check_runs_against_a_fake_server_and_leaves_no_object():
 # Backend selection
 
 def test_build_storage_picks_the_backend_from_the_environment(monkeypatch, tmp_path):
-    for name in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "SUPABASE_STORAGE_BUCKET"):
+    for name in ("SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_STORAGE_BUCKET"):
         monkeypatch.delenv(name, raising=False)
     assert isinstance(build_storage(tmp_path), LocalStorage)
 
@@ -179,7 +179,7 @@ def test_build_storage_picks_the_backend_from_the_environment(monkeypatch, tmp_p
     with pytest.raises(StorageError, match="both"):               # half-configured must not fall back silently
         build_storage(tmp_path)
 
-    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "s3cret")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "s3cret")
     storage = build_storage(tmp_path)
     assert isinstance(storage, SupabaseStorage) and "catalogs" in storage.describe()
     monkeypatch.setenv("SUPABASE_STORAGE_BUCKET", "other")

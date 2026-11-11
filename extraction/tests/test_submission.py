@@ -20,7 +20,7 @@ CHILD = HERE / "crash_child.py"
 
 
 def submit_now(env, provider):
-    return submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+    return submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                              catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
 
 
@@ -109,11 +109,10 @@ def test_t3_process_dies_right_after_create_is_verified_and_not_resubmitted(env,
     assert [s["state"] for s in env.submissions()] == ["submitted"]
     assert env.page_statuses() == ["submitted"] * 3
 
-    assert batch.collect(provider, env.repo, env.model, env.settings) == [batch_id]
+    assert batch.collect(provider, env.repo, env.model) == [batch_id]
     assert env.page_statuses() == ["ok"] * 3
     assert count(env, "extraction_data") == 3
     assert count(env, "product") == 3
-    assert len(list((env.settings.output_dir / env.model.name / "Test" / "images").glob("*.png"))) == 3
     assert [s["state"] for s in env.submissions()] == ["completed"]
 
     report = submit_now(env, provider)

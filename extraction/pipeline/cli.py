@@ -1,4 +1,4 @@
-"""Command-line entry point: python -m pipeline {list,report,benchmark,batch,db} ..."""
+"""Command-line entry point: python -m pipeline {list,report,benchmark,batch,db,storage} ..."""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +16,7 @@ from pipeline.providers import build_provider
 from pipeline.providers.base import ProviderAuthError
 from pipeline.report import catalog_rows, format_batches, format_catalogs, format_pages
 from pipeline.repo import Repo
+from pipeline.storage import StorageError, build_storage
 
 
 def _parse_pages(spec: str) -> list[int]:
@@ -53,6 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
     db_sub = db_cmd.add_subparsers(dest="db_command", required=True)
     db_sub.add_parser("check", help="Print server version; confirm the 12 tables exist with RLS on.")
     db_sub.add_parser("migrate", help="Apply supabase/migrations/*.sql (only into an empty schema).")
+
+    storage_cmd = sub.add_parser("storage", help="Object storage for PDFs and page images.")
+    storage_sub = storage_cmd.add_subparsers(dest="storage_command", required=True)
+    storage_sub.add_parser("check", help="Show which backend is used; write, read back and delete a probe object.")
 
     report = sub.add_parser("report", help="Print cost and tokens per catalog and batch; no API calls.")
     report.add_argument("catalogs", nargs="*", help="Catalog keys. Default: all registered catalogs.")
@@ -95,8 +100,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_report(repo: Repo, catalogs: list[str] | None, detail: bool) -> None:
-    rows = catalog_rows(repo.catalog_stats(catalogs or None))
+def _print_report(repo: Repo, catalogs: list[str] | None, detail: bool, catalog_dir) -> None:
+    rows = catalog_rows(repo.catalog_stats(catalogs or None), catalog_dir)
     if detail:
         for row in rows:
             print(f"\n{row['catalog_name']}")
@@ -112,6 +117,8 @@ def _print_report(repo: Repo, catalogs: list[str] | None, detail: bool) -> None:
 def _run_batch(args, settings) -> int:
     model = get_model(load_models(), args.model or settings.default_model)
     provider = build_provider(model, settings.retry)
+    storage = build_storage(settings.output_dir)
+    logging.getLogger(__name__).info("storage: %s", storage.describe())
 
     with db.advisory_lock(), db.connect(autocommit=True) as conn:
         repo = Repo(conn, model.name)
@@ -123,8 +130,8 @@ def _run_batch(args, settings) -> int:
             for key in catalogs:
                 catalog_path(settings.catalog_dir, key)
             report = submission.submit(provider=provider, model=model, repo=repo, settings=settings,
-                                       catalog_dir=settings.catalog_dir, catalogs=catalogs,
-                                       pages=args.pages)
+                                       storage=storage, catalog_dir=settings.catalog_dir,
+                                       catalogs=catalogs, pages=args.pages)
             print(f"submitted {report.submitted} page(s) in {len(report.batch_ids)} batch(es); "
                   f"skipped {report.skipped}; failed to render {report.failed}")
             for batch_id in report.batch_ids:
@@ -152,11 +159,23 @@ def _run_batch(args, settings) -> int:
         if args.batch_command == "sync":
             for line in batch.refresh_status(provider, repo):
                 print(line)
-        collected = batch.collect(provider, repo, model, settings)
+        collected = batch.collect(provider, repo, model)
         print(f"collected {len(collected)} batch(es)" + (f": {', '.join(collected)}" if collected else ""))
         if collected:
-            _print_report(repo, None, detail=False)
+            _print_report(repo, None, False, settings.catalog_dir)
         return 0
+
+
+def _run_storage(settings) -> int:
+    try:
+        storage = build_storage(settings.output_dir)
+        print(f"backend: {storage.describe()}")
+        storage.check()
+    except StorageError as exc:
+        print(f"storage check failed: {exc}", file=sys.stderr)
+        return 5
+    print("ok: wrote, read back and deleted a probe object")
+    return 0
 
 
 def _run_db(args) -> int:
@@ -200,10 +219,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{key}\t{doc.page_count} pages")
         return 0
 
+    if args.command == "storage":
+        return _run_storage(settings)
+
     if args.command == "report":
         model = get_model(load_models(), args.model or settings.default_model)
         with db.connect(autocommit=True) as conn:
-            _print_report(Repo(conn, model.name), args.catalogs, args.detail)
+            _print_report(Repo(conn, model.name), args.catalogs, args.detail, settings.catalog_dir)
         return 0
 
     if args.command == "benchmark":
@@ -225,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
     except ProviderAuthError as exc:
         print(f"Stopped: {exc}. Check ANTHROPIC_API_KEY in the project-root .env.", file=sys.stderr)
         return 2
+    except StorageError as exc:
+        print(f"Stopped: storage failed: {exc}. Run `python -m pipeline storage check`.", file=sys.stderr)
+        return 5
 
 
 if __name__ == "__main__":

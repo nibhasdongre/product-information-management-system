@@ -27,7 +27,7 @@ _RESOLVED = "(a.error is not null or a.input_tokens > 0)"   # an attempt whose o
 _COMPARED = ("product_name", "product_description", "variant", "price_amount", "price_currency",
              "tax_note", "weight", "weight_unit")
 PRICE_CHECKS = ("correct", "wrong", "fabricated", "missing", "none")
-AUDIT_COLUMNS = ("catalog", "page", "pdf_path", "image_path", "position", "product_name", "price_amount",
+AUDIT_COLUMNS = ("catalog", "page", "pdf_path", "position", "product_name", "price_amount",
                  "price_currency", "variant", "weight", "confidence",
                  "name_correct", "price_check", "missed_on_page", "notes")
 
@@ -173,7 +173,7 @@ def export_audit(repo: Repo, path: Path, size: int, seed: int, catalogs: list[st
         raise FileExistsError(f"{path} already exists; move it or pick another name")
     params = {"model": repo.model, "names": catalogs or None}
     pages = repo.fetch(
-        f"""select p.extraction_id, p.page, c.catalog_name, c.storage_path, d.image_path, d.raw_output
+        f"""select p.extraction_id, p.page, c.catalog_name, d.raw_output
             from page_extractions p join catalog c using (catalog_id) join extraction_data d using (extraction_id)
             where p.model = %(model)s and p.status = 'ok' and {_NAMES}""", params)
     if not pages:
@@ -194,8 +194,7 @@ def export_audit(repo: Repo, path: Path, size: int, seed: int, catalogs: list[st
         out = csv.DictWriter(fh, fieldnames=AUDIT_COLUMNS)
         out.writeheader()
         for p in sample:
-            base = {"catalog": p["catalog_name"], "page": p["page"], "pdf_path": p["storage_path"],
-                    "image_path": p["image_path"] or ""}
+            base = {"catalog": p["catalog_name"], "page": p["page"], "pdf_path": f"{p['catalog_name']}.pdf"}
             products = p["raw_output"].get("products", [])
             if not products:
                 out.writerow(base)  # a page the model found nothing on: the auditor fills missed_on_page

@@ -20,11 +20,15 @@ _CATALOG_HEADER = (f"{'catalog':<30}{'pdf':>5}{'ok':>5}{'err':>5}{'wait':>6}{'to
                    f"{'in_tok':>10}{'out_tok':>10}{'cost $':>10}{'render s':>10}")
 
 
-def catalog_rows(stats: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Add the PDF page count and the pages still to do to each catalog's SQL totals."""
+def catalog_rows(stats: list[dict[str, Any]], catalog_dir: Path) -> list[dict[str, Any]]:
+    """Add the PDF page count and the pages still to do to each catalog's SQL totals.
+
+    The page count is read from the PDF in the local catalogue folder; without it (for example on a
+    machine that only has the stored copy) the PDF column shows 0 and the todo count is not meaningful."""
     rows = []
     for s in stats:
-        pdf_pages = pdf_page_count(s["storage_path"]) if Path(s["storage_path"]).is_file() else 0
+        pdf = Path(catalog_dir) / f"{s['catalog_name']}.pdf"
+        pdf_pages = pdf_page_count(str(pdf)) if pdf.is_file() else 0
         rows.append({**s, "pdf_pages": pdf_pages,
                      "todo": max(0, pdf_pages - s["pages_ok"] - s["pages_in_flight"])})
     return rows

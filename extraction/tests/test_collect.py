@@ -24,7 +24,7 @@ class RichProvider(FakeProvider):
 
 
 def _submit_and_end(env, provider, results_ids=None):
-    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                       catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
     batch_id = env.server.batch_ids()[0]
     env.server.end(batch_id, results_ids=results_ids)
@@ -32,7 +32,7 @@ def _submit_and_end(env, provider, results_ids=None):
 
 
 def _collect(env, provider):
-    return batch.collect(provider, env.repo, env.model, env.settings)
+    return batch.collect(provider, env.repo, env.model)
 
 
 def test_catalog_and_brand_are_registered_from_the_file_name(env):
@@ -64,7 +64,7 @@ def test_collect_writes_raw_output_products_and_costs(env):
     assert first["sub_id"] == second["sub_id"] is not None
 
     # 3 pages x (1000 in x $2 + 100 out x $10) / 1M x 0.5 batch discount
-    stats = catalog_rows(env.repo.catalog_stats())[0]
+    stats = catalog_rows(env.repo.catalog_stats(), env.catalog_dir)[0]
     assert (stats["pages_ok"], stats["attempts"]) == (3, 3)
     assert stats["input_tokens"] == 3000 and stats["output_tokens"] == 300
     assert abs(float(stats["cost_usd"]) - 0.0045) < 1e-9
@@ -110,7 +110,7 @@ def test_interrupted_collect_resumes_without_duplicates(env, monkeypatch):
 
 def test_page_missing_from_the_results_becomes_an_error_and_is_retried_with_history(env):
     provider = FakeProvider(env.server)
-    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                       catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
     batch_id = env.server.batch_ids()[0]
     wanted = env.server.batch(batch_id)["custom_ids"][:2]  # the batch returns only two of three results
@@ -121,7 +121,7 @@ def test_page_missing_from_the_results_becomes_an_error_and_is_retried_with_hist
     failed = env.q("select extraction_id, error from extraction_attempts where error is not null")
     assert len(failed) == 1 and "no result" in failed[0]["error"]
 
-    report = submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+    report = submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                                catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
     assert report.submitted == 1 and report.skipped == 2
     attempts = env.q("select attempt_no from extraction_attempts where extraction_id = %s order by attempt_no",
@@ -133,6 +133,20 @@ def test_a_renamed_copy_of_a_registered_pdf_is_the_same_catalog(env):
     _submit_and_end(env, FakeProvider(env.server))
     copy = env.catalog_dir / "Other_Name.pdf"
     copy.write_bytes((env.catalog_dir / "Test.pdf").read_bytes())
-    first = env.repo.ensure_catalog("Test", env.catalog_dir / "Test.pdf")
-    assert env.repo.ensure_catalog("Other_Name", copy) == first
+    first = env.repo.ensure_catalog("Test", env.catalog_dir / "Test.pdf", env.storage)
+    assert env.repo.ensure_catalog("Other_Name", copy, env.storage) == first
     assert env.q("select count(*) as n from catalog")[0]["n"] == 1
+
+
+def test_pdf_is_stored_and_collect_needs_only_the_database(env):
+    provider = FakeProvider(env.server)
+    _submit_and_end(env, provider)
+    pdf_bytes = (env.catalog_dir / "Test.pdf").read_bytes()
+    (env.catalog_dir / "Test.pdf").unlink()          # no local PDF, and collect is given no storage at all
+    assert len(_collect(env, provider)) == 1
+
+    catalog = env.q("select file_sha256, storage_path from catalog")[0]
+    assert catalog["storage_path"] == f"pdfs/{catalog['file_sha256']}.pdf"
+    assert env.storage.get(catalog["storage_path"]) == pdf_bytes
+    assert env.page_statuses() == ["ok"] * 3
+    assert [r["image_path"] for r in env.q("select image_path from extraction_data")] == [None] * 3

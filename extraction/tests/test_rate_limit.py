@@ -114,7 +114,7 @@ def test_error_that_only_mentions_429_is_not_a_refusal(sleeps):
 def test_exhausted_429_releases_pages_in_the_submission_flow(env, sleeps):
     provider, script = make_provider([received_429("1")] * 3, tries=3)
     with pytest.raises(BatchRejected):
-        submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+        submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                           catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
     assert env.repo.unresolved() == []
     assert [s["state"] for s in env.submissions()] == ["released"]

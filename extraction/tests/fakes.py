@@ -27,6 +27,7 @@ from pipeline.providers.base import (  # noqa: E402
 )
 from pipeline import db  # noqa: E402
 from pipeline.repo import Repo  # noqa: E402
+from pipeline.storage import LocalStorage  # noqa: E402
 
 CRASH_EXIT_CODE = 7
 
@@ -161,6 +162,7 @@ class Env:
     conn: object
     server: FakeServer
     catalog_dir: Path
+    storage: LocalStorage
 
     def q(self, query: str, params=None) -> list[dict]:
         return self.repo._all(query, params)
@@ -194,4 +196,5 @@ def make_env(base: Path, pages: int = 3, conn=None) -> Env:
     model = ModelSpec(name="claude-sonnet-5", provider="claude", max_output_tokens=8192,
                       input_usd_per_mtok=2.0, output_usd_per_mtok=10.0, batch_discount=0.5)
     conn = conn or db.connect(autocommit=True)
-    return Env(settings, model, Repo(conn, model.name), conn, FakeServer(base / "server.json"), catalog_dir)
+    return Env(settings, model, Repo(conn, model.name), conn, FakeServer(base / "server.json"), catalog_dir,
+               LocalStorage(base / "storage"))

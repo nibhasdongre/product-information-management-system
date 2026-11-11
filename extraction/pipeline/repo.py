@@ -17,6 +17,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from pipeline.records import product_row
+from pipeline.storage import Storage, pdf_key
 
 UNRESOLVED_STATES = ("prepared", "submitting", "unknown", "needs_review")
 IN_FLIGHT = ("reserved", "submitted")
@@ -76,14 +77,17 @@ class Repo:
 
     # Catalogues
 
-    def ensure_catalog(self, key: str, path: Path) -> int:
+    def ensure_catalog(self, key: str, path: Path, storage: Storage) -> int:
         """Return the catalog_id for this PDF, registering it (and its brand) on first sight.
 
-        A re-upload is recognised by its hash, whatever the file is called."""
+        A re-upload is recognised by its hash, whatever the file is called. On first sight the PDF is
+        uploaded to storage before the catalog row is written, so a registered catalogue always has its
+        PDF; `storage_path` holds the storage key, not a local path."""
         sha = file_sha256(path)
         row = self._one("select catalog_id from catalog where file_sha256 = %s", (sha,))
         if row:
             return row["catalog_id"]
+        storage.put_file(pdf_key(sha), path, "application/pdf")
         brand_name = brand_from_key(key)
         with self.conn.transaction():
             brand = self._one(
@@ -94,7 +98,7 @@ class Repo:
             created = self._one(
                 "insert into catalog (catalog_name, brand_id, file_sha256, storage_path) "
                 "values (%s, %s, %s, %s) returning catalog_id",
-                (key, brand["brand_id"], sha, str(path.resolve())))
+                (key, brand["brand_id"], sha, pdf_key(sha)))
         return created["catalog_id"]
 
     def page_statuses(self, catalog_id: int) -> dict[int, str]:
@@ -320,7 +324,7 @@ class Repo:
 
     def catalog_stats(self, names: list[str] | None = None) -> list[dict[str, Any]]:
         return self._all(
-            """select c.catalog_id, c.catalog_name, c.storage_path,
+            """select c.catalog_id, c.catalog_name,
                       count(p.*) filter (where p.status = 'ok') as pages_ok,
                       count(p.*) filter (where p.status = 'error') as pages_error,
                       count(p.*) filter (where p.status = any(%s)) as pages_in_flight,
@@ -335,7 +339,7 @@ class Repo:
                           from extraction_attempts x join page_extractions pe using (extraction_id)
                           where pe.model = %s group by pe.catalog_id) a on a.catalog_id = c.catalog_id
                where (%s::text[] is null or c.catalog_name = any(%s))
-               group by c.catalog_id, c.catalog_name, c.storage_path, a.tries, a.input_tokens,
+               group by c.catalog_id, c.catalog_name, a.tries, a.input_tokens,
                         a.output_tokens, a.cost_usd, a.render_s
                order by c.catalog_name""",
             (list(IN_FLIGHT), self.model, self.model, names, names))

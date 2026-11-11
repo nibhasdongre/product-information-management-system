@@ -33,7 +33,7 @@ FIELDS: tuple[Field, ...] = (
           "string — the product's short title/name (NOT the full description)", required=True),
     Field("product_description", "string", "string — full specs/details text"),
     Field("price_amount", ("number", "null"),
-          "number or null — the printed price; null if none shown", required=True),
+          "number — the printed price. An item with no printed price is not returned as a product", required=True),
     Field("price_currency", "string", "string — e.g. INR"),
     Field("tax_note", "string", "string — on-pack qualifier if any, e.g. +GST / MRP / incl"),
     Field("weight", ("string", "null"), "string or null — e.g. '247 gms', '500ml'"),
@@ -45,7 +45,7 @@ FIELDS: tuple[Field, ...] = (
     Field("colours", ("array", "null"), "array of strings or null", items={"type": "string"}),
     Field("eco_friendly", ("boolean", "null"), "boolean or null"),
     Field("confidence", "number", "number 0-1"),
-    Field("extraction_flags", "array", "array of strings — e.g. price_not_found",
+    Field("extraction_flags", "array", "array of strings — e.g. unclear_text",
           items={"type": "string"}),
 )
 

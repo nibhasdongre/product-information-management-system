@@ -62,10 +62,10 @@ class PricedProvider(FakeProvider):
 
 
 def _run(env, provider):
-    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                       catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
     env.server.end(env.server.batch_ids()[0])
-    batch.collect(provider, env.repo, env.model, env.settings)
+    batch.collect(provider, env.repo, env.model)
 
 
 def _args(**kw):

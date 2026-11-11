@@ -11,6 +11,6 @@ from pipeline import submission  # noqa: E402
 
 env = make_env(Path(sys.argv[1]))
 provider = FakeProvider(env.server, crash_after_create=True)
-submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                   catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
 print("submission returned; the crash should have happened first", file=sys.stderr)

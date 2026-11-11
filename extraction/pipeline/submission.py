@@ -29,6 +29,7 @@ from pipeline.model_image import model_image
 from pipeline.pdf import catalog_path, open_catalog, render_png
 from pipeline.providers.base import BatchRejected, BatchSummary, Provider, ProviderAuthError
 from pipeline.repo import PageReservation, Repo
+from pipeline.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def custom_id(submission_id: str, extraction_id: int) -> str:
     return f"{submission_id.replace('-', '')[:12]}-{extraction_id}"
 
 
-def submit(*, provider: Provider, model: ModelSpec, repo: Repo, settings: Settings,
+def submit(*, provider: Provider, model: ModelSpec, repo: Repo, settings: Settings, storage: Storage,
            catalog_dir: Path, catalogs: list[str], pages: list[int] | None) -> SubmitReport:
     unresolved = repo.unresolved()
     if unresolved:
@@ -95,7 +96,7 @@ def submit(*, provider: Provider, model: ModelSpec, repo: Repo, settings: Settin
     chunk: list[_Item] = []
     chunk_bytes = 0
     for catalog in catalogs:
-        catalog_id = repo.ensure_catalog(catalog, catalog_path(catalog_dir, catalog))
+        catalog_id = repo.ensure_catalog(catalog, catalog_path(catalog_dir, catalog), storage)
         statuses = repo.page_statuses(catalog_id)
         with open_catalog(catalog_dir, catalog) as doc:
             for page in pages or range(1, doc.page_count + 1):

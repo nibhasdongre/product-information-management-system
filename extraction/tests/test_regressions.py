@@ -33,7 +33,7 @@ def test_cli_reports_bad_page_selection_as_usage_error(capsys):
 def test_batch_created_five_minutes_before_the_submission_is_not_a_candidate(env):
     failing = FakeProvider(env.server, fail_before_send=True)
     with pytest.raises(submission.SubmissionUnknown):
-        submission.submit(provider=failing, model=env.model, repo=env.repo, settings=env.settings,
+        submission.submit(provider=failing, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                           catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
     created = env.submissions()[0]["created_at"]
 

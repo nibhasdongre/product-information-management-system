@@ -7,7 +7,7 @@ from pipeline.report import batch_wall_time, format_batches
 
 
 def _submit(env, provider):
-    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings,
+    submission.submit(provider=provider, model=env.model, repo=env.repo, settings=env.settings, storage=env.storage,
                       catalog_dir=env.catalog_dir, catalogs=["Test"], pages=None)
 
 
@@ -41,7 +41,7 @@ def test_collect_records_timing_before_writing_results(env):
     _submit(env, provider)
     env.server.end(env.server.batch_ids()[0])
 
-    assert len(batch.collect(provider, env.repo, env.model, env.settings)) == 1
+    assert len(batch.collect(provider, env.repo, env.model)) == 1
     sub = env.submissions()[0]
     assert sub["state"] == "completed"
     assert sub["batch_ended_at"] is not None

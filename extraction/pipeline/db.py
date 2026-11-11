@@ -5,6 +5,7 @@ as long as the session, which the transaction pooler (port 6543) does not guaran
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -72,6 +73,76 @@ def check(conn: psycopg.Connection) -> dict:
 
 
 def apply_migration(conn: psycopg.Connection, path: Path) -> None:
-    """Run one migration file in a single transaction (all or nothing)."""
+    """Run one migration file in a single transaction (all or nothing), without recording it."""
     with conn.transaction():
         conn.execute(path.read_text(encoding="utf-8"))
+
+
+_MIGRATION_NAME = re.compile(r"(\d{14})_(.+)\.sql")
+
+
+def migration_files(directory: Path = MIGRATIONS_DIR) -> list[tuple[str, str, Path]]:
+    """(version, name, path) for each migration, in order. Files are `<14-digit version>_<name>.sql`."""
+    found: list[tuple[str, str, Path]] = []
+    seen: set[str] = set()
+    for path in sorted(Path(directory).glob("*.sql")):
+        match = _MIGRATION_NAME.fullmatch(path.name)
+        if not match:
+            raise ValueError(f"bad migration file name {path.name!r}: expected <14-digit version>_<name>.sql")
+        version, name = match.groups()
+        if version in seen:
+            raise ValueError(f"two migrations share the version {version}")
+        seen.add(version)
+        found.append((version, name, path))
+    return found
+
+
+def _tracking_table() -> tuple[str, sql.Composable]:
+    """Applied migrations are recorded in the table the Supabase CLI uses, so `supabase db push` can take
+    over later. Tests (PIM_DB_SCHEMA set) keep their own copy inside the test schema."""
+    schema = os.environ.get("PIM_DB_SCHEMA") or "supabase_migrations"
+    return schema, sql.Identifier(schema, "schema_migrations")
+
+
+def migrate(conn: psycopg.Connection, directory: Path = MIGRATIONS_DIR) -> list[str]:
+    """Apply every migration not yet recorded, in order, and return what happened.
+
+    Each migration and its record are written in one transaction, so a failing migration leaves the
+    database as it was and is retried next time. A database built before migrations were tracked (it
+    already has the first schema and nothing is recorded) is baselined: the first migration is recorded
+    as applied and not run again. Needs an autocommit connection."""
+    if not conn.autocommit:
+        raise ValueError("migrate needs an autocommit connection")
+    files = migration_files(directory)
+    schema, table = _tracking_table()
+    conn.execute(sql.SQL("create schema if not exists {}").format(sql.Identifier(schema)))
+    conn.execute(sql.SQL("create table if not exists {} "
+                         "(version text not null primary key, statements text[], name text)").format(table))
+    record = sql.SQL("insert into {} (version, statements, name) values (%s, %s, %s)").format(table)
+    applied = {row[0] for row in conn.execute(sql.SQL("select version from {}").format(table)).fetchall()}
+    messages: list[str] = []
+
+    if not applied and files:
+        missing = check(conn)["missing"]
+        if not missing:
+            version, name, path = files[0]
+            conn.execute(record, (version, [path.read_text(encoding="utf-8")], name))
+            applied.add(version)
+            messages.append(f"baseline: the schema was already there from before migrations were tracked; "
+                            f"recorded {path.name} as applied")
+        elif len(missing) < len(EXPECTED_TABLES):
+            raise RuntimeError("the database has only part of the first schema (missing: "
+                               + ", ".join(missing) + "); fix it by hand before migrating")
+
+    for version, name, path in files:
+        if version in applied:
+            continue
+        text = path.read_text(encoding="utf-8")
+        with conn.transaction():
+            conn.execute(text)
+            conn.execute(record, (version, [text], name))
+        messages.append(f"applied {path.name}")
+
+    known = {version for version, _, _ in files}
+    messages += [f"WARNING: migration {version} is applied but has no file here" for version in sorted(applied - known)]
+    return messages

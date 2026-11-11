@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 
+import psycopg
 from dotenv import load_dotenv
 
 from pipeline import batch, benchmark, db, submission
@@ -53,7 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
     db_cmd = sub.add_parser("db", help="Database: check the connection and schema, apply migrations.")
     db_sub = db_cmd.add_subparsers(dest="db_command", required=True)
     db_sub.add_parser("check", help="Print server version; confirm the 12 tables exist with RLS on.")
-    db_sub.add_parser("migrate", help="Apply supabase/migrations/*.sql (only into an empty schema).")
+    db_sub.add_parser("migrate", help="Apply any supabase/migrations/*.sql not yet applied, and record them.")
 
     storage_cmd = sub.add_parser("storage", help="Object storage for PDFs and page images.")
     storage_sub = storage_cmd.add_subparsers(dest="storage_command", required=True)
@@ -179,15 +180,14 @@ def _run_storage(settings) -> int:
 
 
 def _run_db(args) -> int:
-    with db.connect() as conn:
+    with db.connect(autocommit=True) as conn:
         if args.db_command == "migrate":
-            existing = [t for t in db.EXPECTED_TABLES if t not in db.check(conn)["missing"]]
-            if existing:
-                print(f"Refusing to migrate: tables already exist: {', '.join(existing)}", file=sys.stderr)
+            try:
+                for line in db.migrate(conn):
+                    print(line)
+            except (ValueError, RuntimeError, psycopg.Error) as exc:
+                print(f"migrate failed (nothing from the failing migration was kept): {exc}", file=sys.stderr)
                 return 1
-            for path in sorted(db.MIGRATIONS_DIR.glob("*.sql")):
-                db.apply_migration(conn, path)
-                print(f"applied {path.name}")
         result = db.check(conn)
     print(result["version"])
     if result["missing"]:

@@ -11,6 +11,7 @@ Status: the extraction pipeline runs on the database and object storage. The rev
 requirements.txt            runtime dependencies
 requirements-dev.txt        adds pytest
 supabase/migrations/        schema, applied in filename order
+.github/workflows/         test job (GitHub Actions)
 extraction/
   config/                   settings.yaml, models.yaml
   pipeline/                 the package (run with python -m pipeline)
@@ -46,7 +47,7 @@ python -m pipeline db migrate
 python -m pipeline db check
 ```
 
-`db migrate` refuses to run if the tables already exist. `db check` prints the server version and confirms the 12 tables exist with row-level security on. RLS is enabled on every table with no policies, so the public Supabase API returns nothing until policies are added.
+`db migrate` applies every migration in `supabase/migrations/` that has not been applied yet, in order, and records each one in `supabase_migrations.schema_migrations` (the table the Supabase CLI uses, so `supabase db push` can take over later). Each migration and its record are written in one transaction, so a failing migration changes nothing and is retried next time. A database built before tracking existed is recognised and baselined without being rebuilt. Add a schema change as a new file named `<14-digit timestamp>_<name>.sql`; never edit one that has been applied. `db check` prints the server version and confirms the 12 tables exist with row-level security on. RLS is enabled on every table with no policies, so the public Supabase API returns nothing until policies are added.
 
 ## Storage
 
@@ -160,7 +161,7 @@ From the repository root:
 python -m pytest extraction/tests -q
 ```
 
-Tests that need the database are skipped when `DATABASE_URL` is unset. They run in a throwaway schema that is dropped afterwards, so real data is never touched. The suite uses a fake Batch API and a local storage folder, so it costs no API money and does not touch your bucket, but each database statement is a network round trip, so a full run takes several minutes against a remote project.
+GitHub Actions runs the same suite on every push, against a throwaway Postgres 17 container (`.github/workflows/tests.yml`), so it needs no Supabase project and no secrets. On a plain Postgres, `extraction/tests/supabase_shim.sql` supplies the roles and `auth` objects that Supabase provides; it is skipped on a real Supabase project. Tests that need the database are skipped when `DATABASE_URL` is unset. They run in a throwaway schema that is dropped afterwards, so real data is never touched. The suite uses a fake Batch API and a local storage folder, so it costs no API money and does not touch your bucket, but each database statement is a network round trip, so a full run takes several minutes against a remote project.
 
 Two real-API scripts are run by hand, and each creates a real batch that writes to the database named in `.env`:
 
@@ -169,7 +170,7 @@ Two real-API scripts are run by hand, and each creates a real batch that writes 
 
 ## Known limits
 
-- Tested on Windows only.
+- Tested on Windows only. The GitHub Actions job (Linux, plain Postgres) is written but has not run yet, so the Supabase shim is unverified until the first push.
 - A live 429 response and a batch's 24-hour expiry are covered by unit tests only.
 - The Supabase Storage backend is tested against a mock server only. Run `python -m pipeline storage check` against the real project to verify the keys and the bucket.
 - Supabase's free plan allows 50 MB per uploaded file by default; a larger PDF needs a higher limit or resumable uploads.

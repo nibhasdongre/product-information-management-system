@@ -1,0 +1,19 @@
+# GIFTSYZ
+
+> GIFTSYZ is a corporate gifting company in Bengaluru, India. It is the gifting arm of 4SYZ, a workplace services company. It offers curated corporate hampers, festive and occasion gifting, and sustainable gifts for teams, clients and partners.
+
+## What it offers
+- Corporate gifting: hampers and gifts for employees, clients and partners
+- Wedding and festive gifting
+- Sustainable gifting made with natural and recycled materials
+- Shubhashaya: the luxury gifting line ("Gifts with Intention")
+
+## How it works
+- The landing page is public. The product catalogue is available after signing in.
+- Signed-in customers can search and filter products, keep a wishlist with estimated quantities and customization notes, and ask for a quotation.
+- Quotation requests are answered with a custom proposal within 4 business hours. Minimum order quantities apply and bulk pricing is available on request.
+
+## Contact
+- Email: hello@4syz.com
+- WhatsApp: +91 98862 07881
+- Parent company: https://4syz.com
